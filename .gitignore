@@ -1,0 +1,15 @@
+# Secrets -- never commit your FRED API key
+.env.local
+.env
+
+# PyCharm / JetBrains
+.idea/
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# RStudio
+.Rproj.user/
+.Rhistory
+*.Rproj

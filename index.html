@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Inflation Rate Explorer</title>
+<style>
+  :root{
+    --bg:#ffffff; --ink:#1a1a2e; --muted:#5c5c72; --line:#d9d9e3;
+    --accent:#3a5bd9; --accent-soft:#e8edfb; --bar:#4a86c8; --bar-fill:rgba(74,134,200,.55);
+    --curve:#d9534f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:16px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+       color:var(--ink);background:var(--bg);padding:24px}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:1.4rem;margin:0 0 .2em}
+  p.sub{margin:0 0 1.2em;color:var(--muted)}
+  fieldset{border:1px solid var(--line);border-radius:10px;margin:0 0 1em;padding:.9em 1em}
+  legend{padding:0 .4em;color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.04em}
+  select{width:100%;font-size:1.05rem;padding:.5em .6em;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .slider-row{display:flex;flex-direction:column;gap:.4em}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  .slider-ticks{display:flex;justify-content:space-between;font-size:.8rem;color:var(--muted);padding:0 2px}
+  .slider-ticks button{background:none;border:none;color:var(--muted);font-size:.8rem;cursor:pointer;padding:0}
+  .slider-ticks button:hover{color:var(--accent);text-decoration:underline}
+  .window-label{font-size:1.15rem;font-weight:700;text-align:center;margin-top:.3em}
+  canvas{width:100%;height:auto;display:block;border:1px solid var(--line);border-radius:10px;margin-top:.5em}
+  .legend{display:flex;gap:1.4em;justify-content:center;font-size:.9rem;color:var(--muted);margin-top:.5em}
+  .legend span{display:inline-flex;align-items:center;gap:.4em}
+  .swatch{width:14px;height:14px;border-radius:3px;display:inline-block}
+  .note{font-size:.9rem;color:var(--muted)}
+  footer{margin-top:2em;font-size:.85rem;color:var(--muted);border-top:1px solid var(--line);padding-top:1em}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Inflation Rate Explorer</h1>
+  <p class="sub">Month-to-month inflation (bars) vs. the annualized rate over a longer window (line). Drag the slider to widen the window from 3 months to 12 and watch how much smoother — and how different — the longer-run rate looks.</p>
+
+  <fieldset>
+    <legend>Measure</legend>
+    <select id="measure">
+      <option value="cpi_all">CPI — All Urban Consumers (headline)</option>
+      <option value="cpi_core">CPI — Core (less food &amp; energy)</option>
+      <option value="pce_all">PCE — All Items (headline)</option>
+      <option value="pce_core">PCE — Core (less food &amp; energy)</option>
+    </select>
+  </fieldset>
+
+  <fieldset>
+    <legend>Annualized window (months)</legend>
+    <div class="slider-row">
+      <input type="range" id="window" min="3" max="12" step="0.1" value="3">
+      <div class="slider-ticks">
+        <button type="button" data-v="3">3 — quarterly</button>
+        <button type="button" data-v="6">6 — half-year</button>
+        <button type="button" data-v="12">12 — year-over-year</button>
+      </div>
+      <div class="window-label" id="window-label">3.0-Month Annualized Rate</div>
+    </div>
+  </fieldset>
+
+  <canvas id="plot" height="360" aria-label="Inflation rate chart"></canvas>
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--bar-fill)"></span>One-month (annualized)</span>
+    <span><span class="swatch" style="background:var(--curve)"></span><span id="line-legend-text">3.0-month (annualized)</span></span>
+  </div>
+  <p class="note" id="explain"></p>
+
+  <footer>
+    Data: Bureau of Labor Statistics (CPI) and Bureau of Economic Analysis (PCE), via the Federal Reserve Economic Data (FRED) API. Values are refreshed periodically by re-running <code>fetch-data.mjs</code> and are not fetched live from the browser.
+  </footer>
+</div>
+
+<script src="data/inflation.js"></script>
+<script>
+let DATA = null;
+const els = {
+  measure: document.getElementById('measure'),
+  windowSlider: document.getElementById('window'),
+  windowLabel: document.getElementById('window-label'),
+  lineLegend: document.getElementById('line-legend-text'),
+  explain: document.getElementById('explain'),
+  canvas: document.getElementById('plot'),
+};
+
+function ordinal(n){
+  return n.toFixed(1).replace(/\.0$/,'');
+}
+
+// ln-space interpolated lookback: value of ln(level) at (index i - lag),
+// falling back to whichever neighboring month is available if the other
+// is missing (e.g. a single BLS/BEA data gap), so a fractional window that
+// straddles one bad month degrades gracefully instead of leaving a hole.
+function lnLevelAt(levels, i, lag){
+  const pos = i - lag;
+  if (pos < 0) return null;
+  const lo = Math.floor(pos), hi = Math.ceil(pos), frac = pos - lo;
+  const vLo = levels[lo], vHi = (hi < levels.length) ? levels[hi] : null;
+  if (vLo == null && vHi == null) return null;
+  if (vLo == null) return Math.log(vHi);
+  if (vHi == null) return Math.log(vLo);
+  if (hi === lo) return Math.log(vLo);
+  const lnLo = Math.log(vLo), lnHi = Math.log(vHi);
+  return lnLo + frac * (lnHi - lnLo);
+}
+
+function annualizedAt(levels, i, n){
+  if (levels[i] == null) return null;
+  const lnPast = lnLevelAt(levels, i, n);
+  if (lnPast == null) return null;
+  return Math.exp((12/n) * (Math.log(levels[i]) - lnPast)) - 1;
+}
+
+function yearFrac(dateStr){
+  const [y,m] = dateStr.split('-').map(Number);
+  return y + (m-1)/12;
+}
+
+function getSeries(){
+  const key = els.measure.value;
+  return DATA.series[key];
+}
+
+const VIEW_START = 2022.0;
+
+function buildView(){
+  const s = getSeries();
+  const levels = s.observations.map(o => o.value);
+  const dates = s.observations.map(o => o.date);
+  const xs = dates.map(yearFrac);
+  let startIdx = xs.findIndex(x => x >= VIEW_START);
+  if (startIdx < 0) startIdx = 0;
+  return { levels, dates, xs, startIdx };
+}
+
+function computeYRange(view){
+  const { levels, startIdx } = view;
+  let vals = [0];
+  for (let i = startIdx; i < levels.length; i++){
+    const bar = annualizedAt(levels, i, 1);
+    if (bar != null) vals.push(bar);
+  }
+  for (let n = 3; n <= 12; n += 0.5){
+    for (let i = startIdx; i < levels.length; i++){
+      const v = annualizedAt(levels, i, n);
+      if (v != null) vals.push(v);
+    }
+  }
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const pad = 0.06 * (hi - lo || 0.01);
+  return { yLo: lo - pad, yHi: hi + pad };
+}
+
+function niceStep(range, targetTicks){
+  const raw = range/targetTicks, mag = Math.pow(10, Math.floor(Math.log10(raw))), norm = raw/mag;
+  const step = norm<1.5?1:norm<3?2:norm<7?5:10;
+  return step*mag;
+}
+function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+let cachedView = null, cachedYRange = null;
+
+function draw(){
+  const n = parseFloat(els.windowSlider.value);
+  els.windowLabel.textContent = ordinal(n) + '-Month Annualized Rate';
+  els.lineLegend.textContent = ordinal(n) + '-month (annualized)';
+
+  const view = cachedView;
+  const { levels, xs, startIdx } = view;
+  const { yLo, yHi } = cachedYRange;
+  const xMin = VIEW_START, xMax = xs[xs.length-1] + 1/12;
+
+  const canvas = els.canvas;
+  const cssW = canvas.clientWidth || 860, cssH = 374;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = cssW*dpr; canvas.height = cssH*dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const padL=54, padR=20, padT=16, padB=48;
+  const plotW=cssW-padL-padR, plotH=cssH-padT-padB;
+  const sx = x => padL + (x-xMin)/(xMax-xMin)*plotW;
+  const sy = y => padT + (1 - (y-yLo)/(yHi-yLo))*plotH;
+
+  ctx.clearRect(0,0,cssW,cssH);
+
+  // y gridlines + labels
+  const yStep = niceStep(yHi-yLo, 6);
+  ctx.strokeStyle = css('--line'); ctx.fillStyle = css('--muted');
+  ctx.font = '12px sans-serif'; ctx.textAlign = 'right'; ctx.lineWidth = 1;
+  for (let y = Math.ceil(yLo/yStep)*yStep; y <= yHi; y += yStep){
+    const py = sy(y);
+    ctx.beginPath(); ctx.moveTo(padL, py); ctx.lineTo(cssW-padR, py); ctx.stroke();
+    ctx.fillText((y*100).toFixed(0)+'%', padL-8, py+4);
+  }
+
+  // x ticks: January and July of each year
+  ctx.textAlign = 'center';
+  for (let yFull = Math.floor(xMin); yFull <= Math.ceil(xMax); yFull++){
+    [0, 6].forEach(mOffset => {
+      const xv = yFull + mOffset/12;
+      if (xv < xMin || xv > xMax) return;
+      const px = sx(xv);
+      ctx.strokeStyle = css('--line');
+      ctx.beginPath(); ctx.moveTo(px, sy(yLo)); ctx.lineTo(px, sy(yLo)+4); ctx.stroke();
+      ctx.fillStyle = css('--muted');
+      ctx.fillText(yFull + ' Q' + (mOffset===0?'1':'3'), px, sy(yLo)+18);
+    });
+  }
+
+  // bars: one-month annualized
+  const barW = Math.max(1, plotW / ((xMax-xMin)*12) * 0.7);
+  ctx.fillStyle = css('--bar-fill');
+  for (let i = startIdx; i < levels.length; i++){
+    const v = annualizedAt(levels, i, 1);
+    if (v == null) continue;
+    const x = xs[i];
+    const px = sx(x);
+    const y0 = sy(0), y1 = sy(v);
+    ctx.fillRect(px - barW/2, Math.min(y0,y1), barW, Math.abs(y1-y0));
+  }
+
+  // line: N-month annualized, broken only where the current month's own
+  // reading is missing (a real data gap), not at every point whose lookback
+  // merely touches a gap elsewhere.
+  ctx.strokeStyle = css('--curve'); ctx.lineWidth = 2.2;
+  ctx.beginPath();
+  let drawing = false;
+  for (let i = startIdx; i < levels.length; i++){
+    const v = annualizedAt(levels, i, n);
+    const px = sx(xs[i]);
+    if (v == null){ drawing = false; continue; }
+    const py = sy(v);
+    if (!drawing){ ctx.moveTo(px, py); drawing = true; }
+    else ctx.lineTo(px, py);
+  }
+  ctx.stroke();
+
+  // zero line
+  ctx.strokeStyle = css('--ink'); ctx.globalAlpha = 0.25; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(padL, sy(0)); ctx.lineTo(cssW-padR, sy(0)); ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // Source/copyright caption baked into the image itself, so it travels
+  // with any screenshot or export rather than living only in repo files.
+  const sourceAgency = els.measure.value.startsWith('cpi') ? 'Bureau of Labor Statistics' : 'Bureau of Economic Analysis';
+  ctx.fillStyle = css('--muted'); ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+  ctx.fillText('Data source: ' + sourceAgency + ', via FRED. © Micah DelVecchio, ' + new Date().getFullYear() + '.', cssW - padR, cssH - 8);
+}
+
+function refreshForMeasureChange(){
+  cachedView = buildView();
+  cachedYRange = computeYRange(cachedView);
+  const s = getSeries();
+  els.explain.textContent = 'Series: ' + s.label + ' (FRED: ' + s.id + '). Both the bars and the line are annualized — a 0.3% one-month rise is shown as roughly the 12-month-compounded equivalent, so it is directly comparable to the longer-window line no matter where the slider sits.';
+  draw();
+}
+
+els.measure.addEventListener('change', refreshForMeasureChange);
+els.windowSlider.addEventListener('input', draw);
+document.querySelectorAll('.slider-ticks button').forEach(b => {
+  b.addEventListener('click', () => { els.windowSlider.value = b.dataset.v; draw(); });
+});
+window.addEventListener('resize', draw);
+
+if (window.INFLATION_DATA) {
+  DATA = window.INFLATION_DATA;
+  refreshForMeasureChange();
+} else {
+  els.explain.textContent = 'data/inflation.js did not load, or window.INFLATION_DATA is missing. Make sure the <script src="data/inflation.js"> tag above this one is present and that file exists (run fetch-data.mjs to generate it).';
+}
+</script>
+</body>
+</html>
