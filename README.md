@@ -2,8 +2,7 @@
 
 An interactive page for class: month-to-month inflation (bars, always annualized) against a longer-window annualized rate (line) for four measures — CPI headline, CPI core, PCE headline, and PCE core. A slider moves the line's window continuously from 3 months to 12; the underlying rate is recalculated in real time as the window changes, not just visually animated between fixed points, so any value the slider lands on is a genuine annualized rate over that many months.
 
-**Live demo:** https://USERNAME.github.io/inflation-explorer/
-*(replace `USERNAME` after enabling GitHub Pages)*
+**Live demo:** https://mpdelvecchio.github.io/inflation-explorer/
 
 ## How it's organized
 
