@@ -65,7 +65,7 @@ For a price index level *P* at month *t*, the annualized rate over an *n*-month 
 rate(n) = (P[t] / P[t-n]) ^ (12/n) - 1
 ```
 
-The one-month bars are just this formula with *n* = 1. For the slider's fractional window widths (e.g. 7.4 months), `P[t-n]` is found by linearly interpolating the price index's *logarithm* between the two neighboring months — which is what makes the line change continuously and smoothly as the slider moves, rather than jumping between three fixed curves.
+The one-month bars are just this formula with *n* = 1. For the slider's fractional window widths (e.g. 7.4 months), the data for the graph is being estimated with log-linear interpolation for these values.
 
 **Data gaps:** BLS/BEA occasionally miss a month's release (e.g., the CPI has no October 2025 reading, due to that year's government shutdown). The bar and line are only left blank on the exact month whose own reading is missing; a longer window that merely *looks back across* that gap falls back to the nearest available neighboring month instead of leaving a hole, so a single missing month doesn't blank out the following year of the 12-month line.
 
