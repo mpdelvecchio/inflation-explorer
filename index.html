@@ -36,7 +36,7 @@
 <body>
 <div class="wrap">
   <h1>Inflation Rate Explorer</h1>
-  <p class="sub">Month-to-month inflation (bars) vs. the annualized rate over a longer window (line). Drag the slider to widen the window from 3 months to 12 and watch how much smoother — and how different — the longer-run rate looks.</p>
+  <p class="sub">Month-to-month inflation (bars) vs. the annualized rate over a longer window (line). The annualized rate is computed 3 ways: using the previous 3 months of observations, the previous 6 months of observations and finally the 12 month period which is more standard. Drag the slider to widen the window over which we compute an annualized rate of change: from 3 months to 12.</p>
 
   <fieldset>
     <legend>Measure</legend>
@@ -49,7 +49,7 @@
   </fieldset>
 
   <fieldset>
-    <legend>Annualized window (months)</legend>
+    <legend>Range of previous observations (months)</legend>
     <div class="slider-row">
       <input type="range" id="window" min="3" max="12" step="0.1" value="3">
       <div class="slider-ticks">
